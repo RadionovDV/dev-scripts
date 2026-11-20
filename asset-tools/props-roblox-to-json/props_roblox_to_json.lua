@@ -1,5 +1,5 @@
 -- Paste this entire file into Roblox Studio Command Bar in Edit mode.
--- First start props_roblox_to_json_start.ps1. Select one Folder or Model.
+-- First start props_roblox_to_json_start.cmd (helper.ps1). Select one Folder or Model.
 -- Compatible with props_json_to_roblox.lua; only direct children become records.
 -- Scene objects and selection are never changed.
 
@@ -159,10 +159,14 @@ end
 local function sameGeometry(expected: BasePart, actual: BasePart): boolean
 	local sizeTolerance = 1e-4 * math.max(1, expected.Size.Magnitude)
 	local positionTolerance = sizeTolerance + 1e-6 * expected.Position.Magnitude
-	local _, angle = expected.CFrame.Rotation:ToObjectSpace(actual.CFrame.Rotation):ToAxisAngle()
+	-- Imported CFrames may contain tiny nonorthogonal rounding errors. Comparing
+	-- their relative axis-angle can report an angle even for IDENTICAL matrices.
+	-- Compare the basis vectors directly instead.
 	return (expected.Size - actual.Size).Magnitude <= sizeTolerance
 		and (expected.Position - actual.Position).Magnitude <= positionTolerance
-		and math.abs(angle) < 5e-4
+		and (expected.CFrame.RightVector - actual.CFrame.RightVector).Magnitude < 5e-4
+		and (expected.CFrame.UpVector - actual.CFrame.UpVector).Magnitude < 5e-4
+		and (expected.CFrame.ZVector - actual.CFrame.ZVector).Magnitude < 5e-4
 end
 
 local function validateReimport(asset: Asset, template: Asset, scale: Vector3, pivot: CFrame)
@@ -206,7 +210,13 @@ local function exportPlacement(asset: Asset, template: Asset): Placement
 	local pivot = asset:GetPivot()
 	local placementRotation = pivot.Rotation * template:GetPivot().Rotation:Inverse()
 	local scale = findScale(asset, template, placementRotation)
-	validateReimport(asset, template, scale, pivot)
+	local exact, problem = pcall(validateReimport, asset, template, scale, pivot)
+	if not exact then
+		-- This file describes one transform per prop. It cannot preserve edits to
+		-- individual parts. Keep exporting and explicitly report this limitation.
+		warn("Проп экспортируется с масштабом по общим габаритам; шаблон не восстановит его геометрию точно:", asset)
+		warn(tostring(problem))
+	end
 	return {
 		name = asset.Name,
 		position = axes(pivot.Position),
@@ -227,24 +237,27 @@ local function request(method: string, path: string, body: string?): any
 		options.Body = body
 	end
 	local success, response = pcall(function() return httpService:RequestAsync(options) end)
-	assert(success, "Нет связи с помощником. Запустите props_roblox_to_json_start.ps1 и разрешите HTTP Requests. " .. tostring(response))
+	assert(success, "Нет связи с помощником. Запустите props_roblox_to_json_start.cmd и разрешите HTTP Requests. " .. tostring(response))
 	local decoded = httpService:JSONDecode(response.Body)
 	assert(response.Success, decoded.message or ("Помощник вернул HTTP " .. tostring(response.StatusCode)))
 	return decoded
 end
 
 local function main()
+	print("[Props JSON] Начало экспорта.")
 	assert(not game:GetService("RunService"):IsRunning(), "Остановите Play перед экспортом.")
 	local selected = selectionService:Get()
 	assert(#selected == 1 and (selected[1]:IsA("Folder") or selected[1]:IsA("Model")),
 		"Выделите ровно одну Folder или Model.")
 	assert(httpService.HttpEnabled, "Включите Allow HTTP Requests в Experience Settings → Security.")
+	print("[Props JSON] Проверка связи с помощником...")
 	local health = request("GET", "/health", nil)
 	assert(health.service == "props_roblox_to_json" and health.version == 1, "На порту помощника запущена другая программа.")
 	local container = selected[1]
 	local templatesFolder = serverStorage:FindFirstChild("Assets", true)
 	assert(templatesFolder and templatesFolder:IsA("Folder"), "Не найдена папка ServerStorage.Assets с шаблонами.")
 	local placements: { Placement } = {}
+	print("[Props JSON] Чтение объектов из «" .. container.Name .. "»...")
 	for index, child in ipairs(container:GetChildren()) do
 		if child:IsA("Model") or child:IsA("BasePart") then
 			local template = templatesFolder:FindFirstChild(child.Name, true)
@@ -259,11 +272,15 @@ local function main()
 		else
 			warn("Пропущен объект: нужен Model или BasePart.", child)
 		end
-		if index % 25 == 0 then task.wait() end
+		if index % 25 == 0 then
+			print("[Props JSON] Обработано объектов: " .. index .. ". Пропов: " .. #placements)
+			task.wait()
+		end
 	end
 	-- JSONEncode({}) produces an object; the importer expects an array even when empty.
 	local json = if #placements == 0 then "[]" else httpService:JSONEncode(placements)
 	local exportId = httpService:GenerateGUID(false)
+	print("[Props JSON] Собрано пропов: " .. #placements .. ". Передача данных помощнику...")
 	request("POST", "/exports", httpService:JSONEncode({ id = exportId, name = container.Name, json = json }))
 	print("Данные переданы помощнику. Выберите место сохранения JSON в окне Windows.")
 	while true do
