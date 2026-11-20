@@ -2,7 +2,7 @@
 
 В Object Mode выделите коллекцию шаблонов в Outliner (режим View Layer).
 Откройте этот скрипт в Text Editor, нажмите Run Script и выберите JSON.
-Коллекция с копиями появится в корне сцены под именем файла без .json.
+Копии появятся в новой коллекции Props. При совпадении имён Blender добавит суффикс.
 """
 
 import json
@@ -69,7 +69,7 @@ def get_mesh_color_targets(template, template_name, colors):
     if not template.vertex_groups:
         if colors.keys() != {template_name}:
             raise ValueError(f"В поле color ожидается цвет «{template_name}».")
-        return {polygon.index: colors[template_name] for polygon in mesh.polygons}
+        return {polygon.index: colors[template_name] for polygon in mesh.polygons}, False
 
     group_names = {}
     for group in template.vertex_groups:
@@ -83,12 +83,14 @@ def get_mesh_color_targets(template, template_name, colors):
         raise ValueError(f"Нет групп вершин: {', '.join(sorted(unknown_names))}.")
 
     colors_by_group = {group_names[name]: color for name, color in colors.items()}
+    first_json_color = next(iter(colors.values()))
     memberships = [
         {entry.group for entry in vertex.groups
          if entry.weight > 0.0 and entry.group in colors_by_group}
         for vertex in mesh.vertices
     ]
     face_colors = {}
+    has_color_conflict = False
     matched_groups = set()
     for polygon in mesh.polygons:
         groups = set.intersection(*(memberships[index] for index in polygon.vertices))
@@ -96,14 +98,16 @@ def get_mesh_color_targets(template, template_name, colors):
             continue
         assigned_colors = {colors_by_group[group_index] for group_index in groups}
         if len(assigned_colors) > 1:
-            raise ValueError(f"Грань {polygon.index} входит в группы с разными цветами.")
-        face_colors[polygon.index] = assigned_colors.pop()
+            face_colors[polygon.index] = first_json_color
+            has_color_conflict = True
+        else:
+            face_colors[polygon.index] = assigned_colors.pop()
         matched_groups.update(groups)
 
     for group_name, color in colors.items():
         if color != WHITE_RGB and group_names[group_name] not in matched_groups:
             raise ValueError(f"В группе «{group_name}» нет целых граней для окраски.")
-    return face_colors
+    return face_colors, has_color_conflict
 
 
 def prepare_placements(file_path, source_collection):
@@ -155,10 +159,11 @@ def prepare_placements(file_path, source_collection):
 
             face_colors = {}
             object_color = None
+            has_color_conflict = False
             if "color" in record:
                 colors = read_colors(record["color"])
                 if colors and template.type == "MESH":
-                    face_colors = get_mesh_color_targets(template, name, colors)
+                    face_colors, has_color_conflict = get_mesh_color_targets(template, name, colors)
                 elif colors:
                     if colors.keys() != {name}:
                         raise ValueError(f"В поле color ожидается цвет «{name}».")
@@ -166,7 +171,9 @@ def prepare_placements(file_path, source_collection):
         except ValueError as error:
             raise ValueError(f"Запись {record_number} («{name}»): {error}") from error
 
-        placements.append((template, name, position, rotation, scale, face_colors, object_color))
+        placements.append(
+            (template, name, position, rotation, scale, face_colors, object_color, has_color_conflict)
+        )
     return placements
 
 
@@ -212,13 +219,14 @@ def srgb_to_linear(channel):
     return ((channel + 0.055) / 1.055) ** 2.4
 
 
-def create_collection(scene, collection_name, placements):
-    collection = bpy.data.collections.new(collection_name)
+def create_collection(scene, placements):
+    collection = bpy.data.collections.new("Props")
     copies = []
     copied_data = []
+    objects_with_color_conflicts = []
 
     try:
-        for template, name, position, rotation, scale, face_colors, object_color in placements:
+        for template, name, position, rotation, scale, face_colors, object_color, has_color_conflict in placements:
             asset_copy = template.copy()
             copies.append(asset_copy)
             asset_copy.name = name
@@ -244,6 +252,8 @@ def create_collection(scene, collection_name, placements):
             elif object_color is not None:
                 asset_copy.color = (*map(srgb_to_linear, object_color), asset_copy.color[3])
             collection.objects.link(asset_copy)
+            if has_color_conflict:
+                objects_with_color_conflicts.append(asset_copy.name)
 
         scene.collection.children.link(collection)
     except Exception:
@@ -255,7 +265,7 @@ def create_collection(scene, collection_name, placements):
         bpy.data.collections.remove(collection, do_unlink=True)
         raise
 
-    return collection
+    return collection, objects_with_color_conflicts
 
 
 class IMPORT_SCENE_OT_roblox_asset_positions(bpy.types.Operator, ImportHelper):
@@ -287,7 +297,7 @@ class IMPORT_SCENE_OT_roblox_asset_positions(bpy.types.Operator, ImportHelper):
             if context.mode != "OBJECT":
                 raise ValueError("Переключитесь в Object Mode перед импортом.")
             placements = prepare_placements(file_path, self.source_collection)
-            collection = create_collection(self.target_scene, file_path.stem, placements)
+            collection, objects_with_color_conflicts = create_collection(self.target_scene, placements)
         except json.JSONDecodeError as error:
             self.report({"ERROR"}, f"Некорректный JSON. Строка {error.lineno}, столбец {error.colno}.")
             return {"CANCELLED"}
@@ -296,6 +306,12 @@ class IMPORT_SCENE_OT_roblox_asset_positions(bpy.types.Operator, ImportHelper):
             return {"CANCELLED"}
 
         self.report({"INFO"}, f"Коллекция «{collection.name}». Создано копий: {len(placements)}.")
+        for object_name in objects_with_color_conflicts:
+            self.report(
+                {"WARNING"},
+                f"Объект «{object_name}». Группы задали разные цвета одной и той же грани. "
+                "Для спорных граней использован первый цвет из JSON.",
+            )
         return {"FINISHED"}
 
 

@@ -1,5 +1,13 @@
-﻿2026-11-20 11:07:53 Received export d2523da1-79bb-4498-a5c9-d062872e5c07; opening Save As, process 11976
-2026-11-20 11:07:54 Export d2523da1-79bb-4498-a5c9-d062872e5c07: Preparing JSON
-2026-11-20 11:07:54 Export d2523da1-79bb-4498-a5c9-d062872e5c07: Loading Windows dialog
-2026-11-20 11:07:54 Export d2523da1-79bb-4498-a5c9-d062872e5c07: Save As dialog is open
-2026-11-20 11:08:07 {"state":"saved","path":"P:\\.Temp\\Props.json"}
+﻿2026-11-20 12:24:25 Received export e51c746e-ae51-4640-beae-00e46cd662bc; opening Save As, process 88736
+2026-11-20 12:24:26 Export e51c746e-ae51-4640-beae-00e46cd662bc: Preparing JSON
+2026-11-20 12:24:26 Export e51c746e-ae51-4640-beae-00e46cd662bc: Save As dialog is open
+2026-11-20 12:24:33 {"state":"saved","path":"P:\\.Temp\\Props.json"}
+2026-11-20 12:58:58 Received export e9709639-49d2-4ed0-b14f-6c29072a346a; opening Save As, process 78448
+2026-11-20 12:58:59 Export e9709639-49d2-4ed0-b14f-6c29072a346a: Preparing JSON
+2026-11-20 12:58:59 Export e9709639-49d2-4ed0-b14f-6c29072a346a: Loading Windows dialog
+2026-11-20 12:58:59 Export e9709639-49d2-4ed0-b14f-6c29072a346a: Save As dialog is open
+2026-11-20 12:59:11 {"state":"cancelled"}
+2026-11-20 13:01:15 Received export f94a2b27-7745-43f3-8392-5514599a1177; opening Save As, process 9284
+2026-11-20 13:01:15 Export f94a2b27-7745-43f3-8392-5514599a1177: Preparing JSON
+2026-11-20 13:01:15 Export f94a2b27-7745-43f3-8392-5514599a1177: Save As dialog is open
+2026-11-20 13:01:20 {"state":"saved","path":"P:\\.Temp\\Props.json"}

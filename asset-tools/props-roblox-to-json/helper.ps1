@@ -9,6 +9,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:PropsHelperPath = $PSCommandPath
+$script:PropsHelperLogPath = [System.IO.Path]::ChangeExtension($script:PropsHelperPath, '.log')
 $script:PropsSaveStagePath = $null
 
 function Set-PropsSaveStage {
@@ -97,7 +98,6 @@ function Write-PropsJsonFile {
 function Save-PropsJson {
     param([string]$Json, [string]$SuggestedName)
     $dialog = $null
-    $owner = $null
     try {
         Set-PropsSaveStage 'Preparing JSON'
         $formatted = Format-PropsJson -Json $Json
@@ -105,8 +105,7 @@ function Save-PropsJson {
         Add-Type -AssemblyName System.Windows.Forms
         [System.Windows.Forms.Application]::EnableVisualStyles()
         $dialog = New-Object System.Windows.Forms.SaveFileDialog
-        # The classic dialog avoids shell-extension/COM initialization hangs.
-        $dialog.AutoUpgradeEnabled = $false
+        $dialog.AutoUpgradeEnabled = $true
         $dialog.Title = 'Save Roblox props as JSON'
         $dialog.Filter = 'JSON files (*.json)|*.json'
         $dialog.DefaultExt = 'json'
@@ -119,24 +118,8 @@ function Save-PropsJson {
         if ([string]::IsNullOrWhiteSpace($safeName)) { $safeName = 'props' }
         if ($safeName.Length -gt 100) { $safeName = $safeName.Substring(0, 100) }
         $dialog.FileName = $safeName + '.json'
-        $owner = New-Object System.Windows.Forms.Form
-        $owner.Text = 'Roblox props - Save JSON'
-        $owner.StartPosition = 'CenterScreen'
-        $owner.ShowInTaskbar = $true
-        $owner.TopMost = $true
-        $owner.Width = 440
-        $owner.Height = 140
-        $label = New-Object System.Windows.Forms.Label
-        $label.Text = 'Choose a location for the exported JSON file.'
-        $label.AutoSize = $true
-        $label.Left = 20
-        $label.Top = 25
-        $owner.Controls.Add($label)
-        $owner.Show()
-        $owner.Activate()
-        [System.Windows.Forms.Application]::DoEvents()
         Set-PropsSaveStage 'Save As dialog is open'
-        if ($dialog.ShowDialog($owner) -ne [System.Windows.Forms.DialogResult]::OK) {
+        if ($dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) {
             return @{ state = 'cancelled' }
         }
         $destination = $dialog.FileName
@@ -147,7 +130,6 @@ function Save-PropsJson {
         return @{ state = 'error'; message = $_.Exception.Message }
     } finally {
         if ($dialog) { $dialog.Dispose() }
-        if ($owner) { $owner.Dispose() }
     }
 }
 
@@ -168,8 +150,7 @@ function New-PropsSaveWorker {
     $startInfo.WorkingDirectory = $directory
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
-    # This child is an interactive file chooser. SW_HIDE would hide its first
-    # native window even when Form.Show() is called explicitly.
+    # Keep the interactive file chooser visible without a console window.
     $startInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Normal
     try {
         $process = [System.Diagnostics.Process]::Start($startInfo)
@@ -210,7 +191,7 @@ function Write-PropsHelperLog {
     param([string]$Message)
     $line = [DateTime]::Now.ToString('yyyy-MM-dd HH:mm:ss') + ' ' + $Message
     Write-Host $line
-    try { Add-Content -LiteralPath ([System.IO.Path]::ChangeExtension($script:PropsHelperPath, '.log')) -Value $line -Encoding UTF8 } catch { }
+    try { Add-Content -LiteralPath $script:PropsHelperLogPath -Value $line -Encoding UTF8 } catch { }
 }
 
 function Read-PropsRequest {
@@ -282,6 +263,12 @@ function Start-PropsHelper {
     $statuses = @{}
     try {
         $listener.Start()
+        # Reset once after the main helper claims the port.
+        try {
+            [System.IO.File]::WriteAllText($script:PropsHelperLogPath, '')
+        } catch {
+            Write-Warning ('Could not reset helper.log: ' + $_.Exception.Message)
+        }
         Write-Host "props_roblox_to_json: ready at http://127.0.0.1:$ListenPort" -ForegroundColor Green
         Write-Host 'Run props_roblox_to_json.lua in Studio Command Bar. Ctrl+C stops this helper.'
         while ($true) {
